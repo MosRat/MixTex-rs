@@ -1,0 +1,25 @@
+[package]
+name = "MixTex-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokenizers = { version = "0.20.0", features = ["default"] }
+image = { version = "0.25.2", features = ["default"] }
+ort = { version = "2.0.0-rc.4", features = ["cuda", "directml", "load-dynamic", "copy-dylibs"] }
+clap = { version = "4.5.15", features = ["default", "derive"] }
+ndarray = { version = "0.15.6" }
+anyhow = "1.0.86"
+#rayon = "1.10.0"
+#itertools = "0.13.0"
+[dependencies.windows]
+version = "0.58.0"
+features = ["Win32_Foundation", "Foundation", "Foundation_Collections", "AI", "AI_MachineLearning", "Graphics", "Graphics_Imaging", "Media", "Win32_System_WinRT", "Storage_Streams"]
+
+[profile.test]
+opt-level = 3
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = 'abort'
