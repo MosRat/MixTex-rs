@@ -32,4 +32,13 @@ mod tests {
         let img = preprocess("test.png");
         eprintln!("{}", model.inference(&img).unwrap());
     }
+
+    #[test]
+    fn test_onnx_batch_inference() {
+        let model = MixTexOnnx::build().unwrap();
+        for _ in 0..10 {
+            let img = preprocess("test.png");
+            eprintln!("{}", model.inference(&img).unwrap());
+        }
+    }
 }

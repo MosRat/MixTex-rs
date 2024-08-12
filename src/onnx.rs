@@ -79,43 +79,70 @@ impl MixTexOnnx {
         let hidden_state = encoder_result["last_hidden_state"].try_extract_tensor::<f32>()?;
         let mut decode_input_ids = array![[0,0,30000_i64]];
         let mut result_idx = [0_u32; MAX_LENGTH];
-        let fill_tensor = Array::<f32, _>::zeros((1, 12, 1, 64).f());
+        let  k_0 = Array::<f32, _>::zeros((1, 12, 0, 64).f()).into_dyn();
+        let  k_1 = Array::<f32, _>::zeros((1, 12, 0, 64).f()).into_dyn();
+        let  k_2 = Array::<f32, _>::zeros((1, 12, 0, 64).f()).into_dyn();
+        let  v_0 = Array::<f32, _>::zeros((1, 12, 0, 64).f()).into_dyn();
+        let  v_1 = Array::<f32, _>::zeros((1, 12, 0, 64).f()).into_dyn();
+        let  v_2 = Array::<f32, _>::zeros((1, 12, 0, 64).f()).into_dyn();
         // (1, 2, 3).f();
 
         // eprintln!("Encode end, start decoder loop");
 
         let check_rate = MAX_LENGTH / 64;
 
+        let mut decoder_result = self.decoder_session.run(ort::inputs! {
+            "encoder_hidden_states" => hidden_state.view(),
+            "input_ids"=> decode_input_ids.view(),
+            "use_cache_branch"=>array![true],
+            "past_key_values.0.key"=>k_0.view(),
+            "past_key_values.0.value"=>v_0.view(),
+            "past_key_values.1.key"=>k_1.view(),
+            "past_key_values.1.value"=>v_1.view(),
+            "past_key_values.2.key"=>k_2.view(),
+            "past_key_values.2.value"=>v_2.view(),
+            }?)?;
+        let mut logits = decoder_result["logits"].try_extract_tensor::<f32>()?;
+        let mut next_token_id = logits.slice(s![0,-1,..])
+            .iter()
+            .enumerate()
+            .max_by(|&(_, x), &(_, y)| {
+                x.partial_cmp(&y).unwrap()
+            })
+            .unwrap()
+            .0;
+
         for i in 0..MAX_LENGTH {
             // let start_loop = std::time::Instant::now();
 
-            let decoder_result = self.decoder_session.run(ort::inputs! {
+            decoder_result = self.decoder_session.run(ort::inputs! {
             "encoder_hidden_states" => hidden_state.view(),
-            "input_ids"=> decode_input_ids.view(),
-            "use_cache_branch"=>array![false],
-            "past_key_values.0.key"=>fill_tensor.view(),
-            "past_key_values.0.value"=>fill_tensor.view(),
-            "past_key_values.1.key"=>fill_tensor.view(),
-            "past_key_values.1.value"=>fill_tensor.view(),
-            "past_key_values.2.key"=>fill_tensor.view(),
-            "past_key_values.2.value"=>fill_tensor.view(),
+            "input_ids"=> array![[next_token_id as i64]],
+            "use_cache_branch"=>array![true],
+            "past_key_values.0.key"=>decoder_result["present.0.key"].try_extract_tensor::<f32>()?,
+            "past_key_values.0.value"=>decoder_result["present.0.value"].try_extract_tensor::<f32>()?,
+            "past_key_values.1.key"=>decoder_result["present.1.key"].try_extract_tensor::<f32>()?,
+            "past_key_values.1.value"=>decoder_result["present.1.value"].try_extract_tensor::<f32>()?,
+            "past_key_values.2.key"=>decoder_result["present.2.key"].try_extract_tensor::<f32>()?,
+            "past_key_values.2.value"=>decoder_result["present.2.value"].try_extract_tensor::<f32>()?,
             }?)?;
             // println!("---->loop {i} {:?} ",start_loop.elapsed());
-            let logits = decoder_result["logits"].try_extract_tensor::<f32>()?;
-            let (next_token_id, _): (usize, _) = logits.slice(s![0,-1,..])
+            logits = decoder_result["logits"].try_extract_tensor::<f32>()?;
+            next_token_id = logits.slice(s![0,-1,..])
                 .iter()
                 .enumerate()
                 .max_by(|&(_, x), &(_, y)| {
                     x.partial_cmp(&y).unwrap()
                 })
-                .unwrap();
+                .unwrap()
+                .0;
             result_idx[i] = next_token_id as u32;
             if next_token_id == 30000 {
                 break;
             }
             decode_input_ids = concatenate![Axis(1),decode_input_ids,array![[next_token_id as i64]]];
             if ((i + 1) % check_rate == 0) && check_repeat(&result_idx[..=i]) {
-                break
+                break;
             }
         }
         eprintln!("\x1b[31mTime cost:\x1b[32m{:?}\x1b[0m", start.elapsed());

@@ -87,10 +87,61 @@ impl MixTexWinML {
         // decoder prepare
         // tokenizer("<s>", return_tensors="np").input_ids = [[0, 0, 30000]]
         let mut decode_input_ids = TensorInt64Bit::CreateFromShapeArrayAndDataArray(&[1, 3], &[0, 0, 30000])?;
-        let fill_tensor = TensorFloat::CreateFromShapeArrayAndDataArray(&[1, 12, 1, 64], &[0_f32; 12 * 64])?;
+        let fill_tensor = TensorFloat::CreateFromShapeArrayAndDataArray(&[1, 12, 0, 64], &[])?;
         // let mut result_text = String::with_capacity(100);
         let mut result_idx = [0_u32; MAX_LENGTH];
         let check_rate = MAX_LENGTH / 64;
+
+        // Prefill输入
+        let binding = LearningModelBinding::CreateFromSession(&self.decoder_session)?;
+        // bing input
+        binding.Bind(&HSTRING::from("encoder_hidden_states"), &hidden_stat).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("input_ids"), &decode_input_ids).expect("Bind input fail!");
+
+
+        // only for fill inputs
+        binding.Bind(&HSTRING::from("use_cache_branch"), &TensorBoolean::CreateFromShapeArrayAndDataArray(&[1], &[true])?).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("past_key_values.0.key"), &fill_tensor).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("past_key_values.0.value"), &fill_tensor).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("past_key_values.1.key"), &fill_tensor).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("past_key_values.1.value"), &fill_tensor).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("past_key_values.2.key"), &fill_tensor).expect("Bind input fail!");
+        binding.Bind(&HSTRING::from("past_key_values.2.value"), &fill_tensor).expect("Bind input fail!");
+        // binding.
+        // eprintln!("Decoder loop {i} binding time cost {:?}", loop_start.elapsed());
+        // let inference_start = std::time::Instant::now();
+
+        // post-process outputs
+        let mut result = self.decoder_session.Evaluate(&binding, &HSTRING::from("run_id"))?
+            .Outputs()?;
+        let mut logits : TensorFloat = result
+            .Lookup(&HSTRING::from("logits"))?
+            .cast()?;
+
+        let buffer = logits.CreateReference()?;
+        let ptr;
+        unsafe {
+            ptr = buffer_get_at::<f32>(buffer);
+        }
+
+
+        let mut next_token_id = (0..30002).map(
+            |i| {
+                unsafe {
+                    *ptr.add(60004 + i)
+                }
+                // buffer.
+                //     buffer.GetAt((length + i) as u32).unwrap()
+            }
+        )
+            .enumerate()
+            .max_by(|&(_, x), &(_, y)| {
+                x.partial_cmp(&y).unwrap()
+            })
+            .unwrap()
+            .0;
+
+
 
         // decoder inference loop
         for i in 0..MAX_LENGTH {
@@ -99,52 +150,52 @@ impl MixTexWinML {
             let binding = LearningModelBinding::CreateFromSession(&self.decoder_session)?;
             // bing input
             binding.Bind(&HSTRING::from("encoder_hidden_states"), &hidden_stat).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("input_ids"), &decode_input_ids).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("input_ids"), &TensorInt64Bit::CreateFromShapeArrayAndDataArray(&[1,1],&[next_token_id as i64])?).expect("Bind input fail!");
 
 
             // only for fill inputs
-            binding.Bind(&HSTRING::from("use_cache_branch"), &TensorBoolean::CreateFromShapeArrayAndDataArray(&[1], &[false])?).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("past_key_values.0.key"), &fill_tensor).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("past_key_values.0.value"), &fill_tensor).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("past_key_values.1.key"), &fill_tensor).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("past_key_values.1.value"), &fill_tensor).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("past_key_values.2.key"), &fill_tensor).expect("Bind input fail!");
-            binding.Bind(&HSTRING::from("past_key_values.2.value"), &fill_tensor).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("use_cache_branch"), &TensorBoolean::CreateFromShapeArrayAndDataArray(&[1], &[true])?).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("past_key_values.0.key"), &result.Lookup(&HSTRING::from("present.0.key"))?).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("past_key_values.0.value"), &result.Lookup(&HSTRING::from("present.0.value"))?).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("past_key_values.1.key"), &result.Lookup(&HSTRING::from("present.1.key"))?).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("past_key_values.1.value"), &result.Lookup(&HSTRING::from("present.1.value"))?).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("past_key_values.2.key"), &result.Lookup(&HSTRING::from("present.2.key"))?).expect("Bind input fail!");
+            binding.Bind(&HSTRING::from("past_key_values.2.value"), &result.Lookup(&HSTRING::from("present.2.value"))?).expect("Bind input fail!");
             // binding.
             // eprintln!("Decoder loop {i} binding time cost {:?}", loop_start.elapsed());
             // let inference_start = std::time::Instant::now();
 
             // post-process outputs
-            let result: TensorFloat = self.decoder_session.Evaluate(&binding, &HSTRING::from("run_id"))?
-                .Outputs()?
+            result = self.decoder_session.Evaluate(&binding, &HSTRING::from("run_id"))?
+                .Outputs()?;
+            logits = result
                 .Lookup(&HSTRING::from("logits"))?
                 .cast()?;
+            // eprintln!("{:?}",logits.Shape()?.into_iter().collect::<Vec<i64>>());
             // eprintln!("Decoder loop {i} inference time cost {:?}", inference_start.elapsed());
             // let pp_start = std::time::Instant::now();
 
 
-            let length: usize = ((i + 2) * 30002) as usize;
-            let buffer = result.CreateReference()?;
+            let buffer = logits.CreateReference()?;
             let ptr;
             unsafe {
                 ptr = buffer_get_at::<f32>(buffer);
             }
 
 
-            let (next_token_id, _): (usize, _) = (0..30002).map(
+            next_token_id = (0..30002).map(
                 |i| {
                     unsafe {
-                        *ptr.add(length + i)
+                        *ptr.add(i)
                     }
-                    // buffer.
-                    //     buffer.GetAt((length + i) as u32).unwrap()
                 }
             )
                 .enumerate()
                 .max_by(|&(_, x), &(_, y)| {
                     x.partial_cmp(&y).unwrap()
                 })
-                .unwrap();
+                .unwrap()
+                .0;
 
             // println!("Decoder {i} deal result time cost :{:?}", pp_start.elapsed());
 
