@@ -46,19 +46,15 @@ pub fn rescale_and_normalize(img: DynamicImage) -> DynamicImage {
 //
 // unsafe impl Sync for SharedArrayPtr {}
 // unsafe impl Send for SharedArrayPtr {}
-pub fn preprocess(path: impl AsRef<Path>) -> Vec<f32> {
+pub fn preprocess(path: impl AsRef<Path>) -> Result<Vec<f32>,Box<dyn std::error::Error>> {
     let img = rescale_and_normalize(resize(
-        ImageReader::open(path)
-            .unwrap()
-            .decode()
-            .unwrap()
+        ImageReader::open(path)?
+            .decode()?
     ));
 
-    // let res = std::cell::UnsafeCell::new([0.; (3 * CONFIG.width * CONFIG.height) as usize]);
+
     let mut res = vec![0.0f32; (3 * CONFIG.width * CONFIG.height) as usize];
-    // let res = Box::new([0.0f32; (3 * CONFIG.width * CONFIG.height) as usize]);
-    // let res_ptr = SharedArrayPtr { ptr: res.as_ptr() as *mut [f32; (3 * CONFIG.width * CONFIG.height) as usize] };
-    // let res_arc = Arc::new(&res_ptr);
+
     let channel_size = (CONFIG.width * CONFIG.height) as usize;
     let _ = img.into_rgb32f().enumerate_pixels().for_each(|(x, y, pixel)| {
         for i in 0..3 {
@@ -67,7 +63,7 @@ pub fn preprocess(path: impl AsRef<Path>) -> Vec<f32> {
         }
     });
 
-    res
+    Ok(res)
     // Vec::from_p(res)
     // img.into_rgb32f().into_vec()
 }

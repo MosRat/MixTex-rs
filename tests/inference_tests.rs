@@ -29,8 +29,11 @@ mod tests {
     #[test]
     fn test_onnx_inference() {
         let model = MixTexOnnx::build().unwrap();
+        let pre_start = std::time::Instant::now();
         let img = preprocess("test.png");
+        eprintln!("{:?}",pre_start.elapsed());
         eprintln!("{}", model.inference(&img).unwrap());
+
     }
 
     #[test]

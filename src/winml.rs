@@ -9,7 +9,8 @@ use windows::{
 use windows::Foundation::IMemoryBufferReference;
 use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream, IOutputStream, RandomAccessStreamReference};
 
-use crate::{check_repeat, DECODER_BYTES, ENCODER_BYTES, TOKENIZER_STR};
+use crate::{check_repeat, DECODER_BYTES, ENCODER_BYTES, MixTexModel, TOKENIZER_STR};
+use crate::args::{StartArgs};
 
 const MAX_LENGTH: usize = 512;
 
@@ -28,24 +29,9 @@ pub struct MixTexWinML {
 }
 
 impl MixTexWinML {
-    pub fn build(
-        device_type: Option<WinMLDeviceType>,
-    ) -> Self {
-        // let encoder_path = HSTRING::from(PathBuf::from(model_path).join("encoder_model.onnx").to_str().expect("Model path error"));
-        // let decoder_path = HSTRING::from(PathBuf::from(model_path).join("decoder_model_merged.onnx").to_str().expect("Model path error"));
-        // let tokenizer_path = PathBuf::from(model_path).join("tokenizer/tokenizer.json").into_os_string().into_string().expect("Tokenizer path error");
+    pub fn build(args:StartArgs) -> std::result::Result<Box<dyn MixTexModel>,Box<dyn std::error::Error>> {
 
-        let device = LearningModelDevice::Create(
-            match device_type {
-                None => { LearningModelDeviceKind::Default }
-                Some(d) => {
-                    match d {
-                        WinMLDeviceType::Cpu => LearningModelDeviceKind::Cpu,
-                        WinMLDeviceType::DirectML => LearningModelDeviceKind::DirectXHighPerformance
-                    }
-                }
-            }
-        ).expect("Create device error");
+        let device = LearningModelDevice::Create(LearningModelDeviceKind::Cpu, ).expect("Create device error");
         let dm_device = LearningModelDevice::Create(LearningModelDeviceKind::DirectXHighPerformance).unwrap();
 
         let encoder_model = LearningModel::LoadFromStream(&RandomAccessStreamReference::CreateFromStream(&bytes_to_stream(ENCODER_BYTES).unwrap()).unwrap())
@@ -58,16 +44,20 @@ impl MixTexWinML {
         let encoder_session = LearningModelSession::CreateFromModelOnDevice(&encoder_model, &device).expect("Create session fail");
         let decoder_session = LearningModelSession::CreateFromModelOnDevice(&decoder_model, &dm_device).expect("Create session fail");
 
-        MixTexWinML {
+        Ok(Box::new(MixTexWinML {
             encoder_model,
             decoder_model,
             encoder_session,
             decoder_session,
             tokenizers: Tokenizer::from_str(TOKENIZER_STR).expect("Fail to load tokenizer"),
-        }
+        }))
     }
 
-    pub fn inference(&self, img: &[f32]) -> std::result::Result<String, Box<dyn std::error::Error>> {
+}
+
+impl MixTexModel for MixTexWinML {
+
+    fn inference(&self, img: &[f32]) -> std::result::Result<String, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
 
@@ -140,11 +130,12 @@ impl MixTexWinML {
             })
             .unwrap()
             .0;
+        result_idx[0] = next_token_id as u32;
 
 
 
         // decoder inference loop
-        for i in 0..MAX_LENGTH {
+        for i in 1..MAX_LENGTH {
             // eprintln!("-------start {i} -------");
             // let loop_start = std::time::Instant::now();
             let binding = LearningModelBinding::CreateFromSession(&self.decoder_session)?;
